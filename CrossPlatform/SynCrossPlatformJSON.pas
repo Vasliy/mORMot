@@ -425,11 +425,12 @@ procedure GetPropsInfo(TypeInfo: TRTTITypeInfo; var PropNames: TStringDynArray;
   var PropRTTI: TRTTIPropInfoDynArray);
 
 /// retrieve the value of a published property as variant
-function GetInstanceProp(Instance: TObject; PropInfo: TRTTIPropInfo; StoreClassName: boolean = False): variant;
+function GetInstanceProp(Instance: TObject; PropInfo: TRTTIPropInfo; StoreClassName: boolean = False;
+  StoreClassAsOrd: boolean = true): variant;
 
 /// set the value of a published property from a variant
 procedure SetInstanceProp(Instance: TObject; PropInfo: TRTTIPropInfo;
-  const Value: variant);
+  const Value: variant; StoreClassAsOrd: boolean=true);
 
 /// retrieve all the published methods of a given class, using RTTI
 procedure GetPublishedMethods(Instance: TObject; out Methods: TPublishedMethodDynArray);
@@ -762,14 +763,14 @@ begin // e.g. YYYY-MM-DD Thh:mm:ss or YYYY-MM-DDThh:mm:ss
   if frac(Value)=0 then
     result := FormatDateTime('yyyy"-"mm"-"dd',Value) else
   if trunc(Value)=0 then
-    result := FormatDateTime('"T"hh":"nn":"ss',Value) else
-    result := FormatDateTime('yyyy"-"mm"-"dd"T"hh":"nn":"ss',Value);
+    result := FormatDateTime('"T"hh":"nn":"ss"."zzz',Value) else
+    result := FormatDateTime('yyyy"-"mm"-"dd"T"hh":"nn":"ss"."zzz',Value);
 end;
 
 function Iso8601ToDateTime(const Value: string): TDateTime;
-var Y,M,D, HH,MI,SS: cardinal;
-begin //  YYYY-MM-DD   Thh:mm:ss  or  YYYY-MM-DDThh:mm:ss
-      //  1234567890   123456789      1234567890123456789
+var Y,M,D, HH,MI,SS,MS: cardinal;
+begin //  YYYY-MM-DD   Thh:mm:ss.ms  or  YYYY-MM-DDThh:mm:ss.ms
+      //  1234567890   123456789012      1234567890123456789012
   result := 0;
   case Length(Value) of
   9: if (Value[1]='T') and (Value[4]=':') and (Value[7]=':') then begin
@@ -799,6 +800,20 @@ begin //  YYYY-MM-DD   Thh:mm:ss  or  YYYY-MM-DDThh:mm:ss
     if (Y<=9999) and ((M-1)<12) and ((D-1)<31) and
        (HH<24) and (MI<60) and (SS<60) then
       result := EncodeDate(Y,M,D)+EncodeTime(HH,MI,SS,0);
+  end;
+  23: if (Value[5]=Value[8]) and (ord(Value[8]) in [ord('-'),ord('/')]) and
+         (ord(Value[11]) in [ord(' '),ord('T')]) and (Value[14]=':') and (Value[17]=':') then begin
+    Y := ord(Value[1])*1000+ord(Value[2])*100+
+         ord(Value[3])*10+ord(Value[4])-(48+480+4800+48000);
+    M := ord(Value[6])*10+ord(Value[7])-(48+480);
+    D := ord(Value[9])*10+ord(Value[10])-(48+480);
+    HH := ord(Value[12])*10+ord(Value[13])-(48+480);
+    MI := ord(Value[15])*10+ord(Value[16])-(48+480);
+    SS := ord(Value[18])*10+ord(Value[19])-(48+480);
+    MS := ord(Value[21])*100+ord(Value[22])*10+ord(Value[23])-(48+480+4800);
+    if (Y<=9999) and ((M-1)<12) and ((D-1)<31) and
+       (HH<24) and (MI<60) and (SS<60) then
+      result := EncodeDate(Y,M,D)+EncodeTime(HH,MI,SS,MS);
   end;
   end;
 end;
@@ -1343,7 +1358,7 @@ begin
     (NativeUInt(PropInfo^.GetProc){$ifndef FPC} and $00FFFFFF{$endif}));
 end;
 
-function GetInstanceProp(Instance: TObject; PropInfo: TRTTIPropInfo; StoreClassName: boolean): variant;
+function GetInstanceProp(Instance: TObject; PropInfo: TRTTIPropInfo; StoreClassName,StoreClassAsOrd: boolean): variant;
 var obj: TObject;
 begin
   VarClear(result);
@@ -1374,10 +1389,13 @@ begin
   tkVariant:
     result := GetVariantProp(Instance,PropInfo);
   tkClass: begin
-    obj := TObject(NativeInt(GetOrdProp(Instance,PropInfo)));
-    if obj=nil then
-      result := null else
-      TJSONVariantData(result).Init(ObjectToJSON(obj, StoreClassName));
+    if StoreClassAsOrd then
+      Result := GetOrdProp(Instance,PropInfo) else begin
+        obj := TObject(NativeInt(GetOrdProp(Instance,PropInfo)));
+        if obj=nil then
+          result := null else
+          TJSONVariantData(result).Init(ObjectToJSON(obj, StoreClassName));
+      end
   end;
   tkDynArray:
     if IsBlob(PropInfo) then
@@ -1386,7 +1404,7 @@ begin
 end;
 
 procedure SetInstanceProp(Instance: TObject; PropInfo: TRTTIPropInfo;
-  const Value: variant);
+  const Value: variant; StoreClassAsOrd: boolean);
 var blob: PByteDynArray;
     obj: TObject;
 begin
@@ -1433,15 +1451,17 @@ begin
         Finalize(blob^);
     end;
   tkClass: begin
-    obj := TObject(NativeInt(GetOrdProp(Instance,PropInfo)));
-    if TVarData(Value).VType>varNull then
-      if obj=nil then begin
-        obj := JSONVariantData(Value)^.ToNewObject;
-        if obj<>nil then
-          SetOrdProp(Instance,PropInfo,NativeInt(obj));
-      end else
-        JSONVariantData(Value)^.ToObject(obj);
-  end;
+    if StoreClassAsOrd then
+      SetOrdProp(Instance,PropInfo,Value) else begin
+        obj := TObject(NativeInt(GetOrdProp(Instance,PropInfo)));
+          if obj=nil then begin
+            obj := JSONVariantData(Value)^.ToNewObject;
+            if obj<>nil then
+              SetOrdProp(Instance,PropInfo,NativeInt(obj));
+          end else
+            JSONVariantData(Value)^.ToObject(obj);
+        end;
+    end;
   end;
 end;
 
