@@ -1405,15 +1405,28 @@ end;
 
 procedure SetInstanceProp(Instance: TObject; PropInfo: TRTTIPropInfo;
   const Value: variant; StoreClassAsOrd: boolean);
+
+function RangedValue(const AMin, AMax: Int64): Int64;
+  begin
+    if VarType(Value) in [varSingle, varDouble, varCurrency, varDate] then
+      Result := Trunc(Value)
+    else
+      Result := Value;
+    if (Result < AMin) or (Result > AMax) then
+      raise ERangeError.Create('Range error');
+  end;
+
 var blob: PByteDynArray;
     obj: TObject;
 begin
   if (PropInfo<>nil) and (Instance<>nil) then
   case PropInfo^.PropType^.Kind of
   tkInt64{$ifdef FPC}, tkQWord{$endif}:
-    if TVarData(Value).VType=varInt64 then
-      SetInt64Prop(Instance,PropInfo,TVarData(Value).VInt64) else
-      SetOrdProp(Instance,PropInfo,Value);
+    with PropInfo^.PropType^^.TypeData^ do
+      if MinInt64Value > MaxInt64Value then
+        SetInt64Prop(Instance, PropInfo, Int64(UInt64(Value)))
+      else
+        SetInt64Prop(Instance, PropInfo, RangedValue(MinInt64Value, MaxInt64Value));
   tkEnumeration, tkInteger, tkSet:
     SetOrdProp(Instance,PropInfo,Value);
   {$ifdef NEXTGEN}
